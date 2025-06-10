@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { Product } from '@/types';
@@ -31,14 +32,19 @@ const StockManagerClient: React.FC = () => {
       try {
         const content = e.target?.result as string;
         const lines = content.split('\n').filter(line => line.trim() !== '');
+        if (lines.length === 0) {
+          toast({ variant: 'destructive', title: 'Empty File', description: 'The selected CSV file is empty or contains no valid product lines.', duration: 5000 });
+          return;
+        }
+        
         const importedProducts: Product[] = lines.map((line, index) => {
-          const parts = line.split(';');
-          if (parts.length < 3) throw new Error(`Line ${index + 1} has insufficient data: ${line}. Expected format: code;name;quantity;[lastUpdated]`);
+          const parts = line.split(',').map(part => part.trim()); // Use comma as delimiter for CSV
+          if (parts.length < 3) throw new Error(`Line ${index + 1} has insufficient data: ${line}. Expected CSV format: code,name,quantity,[lastUpdated]`);
           
-          const code = parts[0].trim();
-          const name = parts[1].trim();
-          const quantityStr = parts[2].trim();
-          const lastUpdatedStr = parts.length > 3 ? parts[3].trim() : undefined;
+          const code = parts[0];
+          const name = parts[1];
+          const quantityStr = parts[2];
+          const lastUpdatedStr = parts.length > 3 ? parts[3] : undefined;
 
           if (!code) throw new Error(`Missing code on line ${index + 1}.`);
           if (!name) throw new Error(`Missing name on line ${index + 1}.`);
@@ -65,11 +71,11 @@ const StockManagerClient: React.FC = () => {
           };
         });
         setProducts(importedProducts);
-        setSelectedProduct(null); // Clear selection after import
-        toast({ title: 'Success', description: `${importedProducts.length} products imported successfully.` });
+        setSelectedProduct(null); 
+        toast({ title: 'Success', description: `${importedProducts.length} products imported successfully from CSV.` });
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error during file parsing.';
-        toast({ variant: 'destructive', title: 'Error Importing File', description: errorMessage, duration: 10000 });
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error during CSV file parsing.';
+        toast({ variant: 'destructive', title: 'Error Importing CSV File', description: errorMessage, duration: 10000 });
       }
     };
     reader.readAsText(file);
@@ -78,20 +84,26 @@ const StockManagerClient: React.FC = () => {
     }
   };
 
-  const handleExportTXT = () => {
+  const handleExportCSV = () => {
     if (products.length === 0) {
       toast({ variant: 'destructive', title: 'No Data', description: 'There is no stock data to export.' });
       return;
     }
-    const content = products.map(p => `${p.code};${p.name};${p.quantity};${p.lastUpdated}`).join('\n');
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    // CSV Header
+    const header = "code,name,quantity,lastUpdated";
+    const csvRows = products.map(p => 
+      [p.code, `"${p.name.replace(/"/g, '""')}"`, p.quantity, p.lastUpdated].join(',')
+    );
+    const content = [header, ...csvRows].join('\n');
+    
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = 'stock_data.txt';
+    link.download = 'stock_data.csv';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    toast({ title: 'Success', description: 'Stock data exported successfully. Save the downloaded file.' });
+    toast({ title: 'Success', description: 'Stock data exported successfully as CSV. Save the downloaded file.' });
   };
 
   const filteredProducts = products.filter(product =>
@@ -101,7 +113,7 @@ const StockManagerClient: React.FC = () => {
 
   const handleProductSelect = (product: Product) => {
     setSelectedProduct(product);
-    setEditForm({ ...product }); // Ensure all fields are populated from the selected product
+    setEditForm({ ...product }); 
     setIsEditing(true);
   };
 
@@ -122,7 +134,6 @@ const StockManagerClient: React.FC = () => {
         toast({ variant: 'destructive', title: 'Error', description: 'Code and Name cannot be empty.' });
         return;
     }
-
 
     const updatedProduct: Product = {
       ...selectedProduct,
@@ -148,7 +159,6 @@ const StockManagerClient: React.FC = () => {
           : p
       );
       
-      // Update selectedProduct if it's the one being modified
       if (selectedProduct && selectedProduct.id === productId) {
         const updatedSelected = newProducts.find(p => p.id === productId);
         setSelectedProduct(updatedSelected || null);
@@ -159,7 +169,7 @@ const StockManagerClient: React.FC = () => {
 
 
   return (
-    <div className="flex flex-col min-h-screen p-4 md:p-6 lg:p-8 bg-background">
+    <div className="flex flex-col min-h-screen p-4 md:p-6 lg:p-8 bg-background font-body">
       <header className="mb-6">
         <Card className="shadow-lg rounded-lg overflow-hidden">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4 bg-card border-b">
@@ -168,7 +178,7 @@ const StockManagerClient: React.FC = () => {
             </CardTitle>
             <Dialog>
               <DialogTrigger asChild>
-                <Button variant="ghost" size="sm">
+                <Button variant="outline" size="sm" className="text-sm">
                   <Icons.apk className="mr-2 h-4 w-4" /> Get APK Info
                 </Button>
               </DialogTrigger>
@@ -196,11 +206,11 @@ const StockManagerClient: React.FC = () => {
           </CardHeader>
           <CardContent className="p-4 flex flex-col gap-3 items-stretch">
             <Button onClick={() => fileInputRef.current?.click()} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground shadow-md">
-              <Icons.upload className="mr-2 h-5 w-5" /> Import TXT
+              <Icons.upload className="mr-2 h-5 w-5" /> Import CSV
             </Button>
-            <input type="file" ref={fileInputRef} onChange={handleFileImport} accept=".txt" className="hidden" />
-            <Button onClick={handleExportTXT} className="w-full shadow-md">
-              <Icons.download className="mr-2 h-5 w-5" /> Export TXT
+            <input type="file" ref={fileInputRef} onChange={handleFileImport} accept=".csv" className="hidden" />
+            <Button onClick={handleExportCSV} className="w-full shadow-md">
+              <Icons.download className="mr-2 h-5 w-5" /> Export CSV
             </Button>
           </CardContent>
         </Card>
@@ -256,9 +266,9 @@ const StockManagerClient: React.FC = () => {
                   <div className="p-8 text-center text-muted-foreground flex flex-col items-center justify-center h-full">
                     <Icons.package className="h-16 w-16 text-muted-foreground/50 mb-4" />
                     <p className="text-lg">
-                      {products.length === 0 ? "Import a TXT file to see your products." : "No products match your search."}
+                      {products.length === 0 ? "Import a CSV file to see your products." : "No products match your search."}
                     </p>
-                    {products.length === 0 && <p className="text-sm">Click "Import TXT" to get started.</p>}
+                    {products.length === 0 && <p className="text-sm">Click "Import CSV" to get started.</p>}
                   </div>
                 )}
               </ScrollArea>
@@ -328,7 +338,7 @@ const StockManagerClient: React.FC = () => {
                 <Icons.info className="h-16 w-16 text-primary/70 mx-auto mb-6" />
                 <p className="text-lg text-muted-foreground font-semibold">Select a product</p>
                 <p className="text-sm text-muted-foreground mt-1">Click on a product from the list to view its details or make changes.</p>
-                <p className="text-sm text-muted-foreground mt-4">New here? Click "Import TXT" to load your stock data.</p>
+                <p className="text-sm text-muted-foreground mt-4">New here? Click "Import CSV" to load your stock data.</p>
               </CardContent>
             </Card>
           )}
@@ -343,3 +353,5 @@ const StockManagerClient: React.FC = () => {
 };
 
 export default StockManagerClient;
+
+    
