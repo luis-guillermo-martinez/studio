@@ -27,7 +27,9 @@ const StockManagerClient: React.FC = () => {
 
   const parseOptionalFloat = (value: string | undefined): number | undefined => {
     if (value === undefined || value.trim() === '') return undefined;
-    const num = parseFloat(value);
+    // Replace comma with dot for decimal parsing if needed for European formats
+    const normalizedValue = value.replace(',', '.');
+    const num = parseFloat(normalizedValue);
     return isNaN(num) ? undefined : num;
   };
 
@@ -52,13 +54,16 @@ const StockManagerClient: React.FC = () => {
           return;
         }
 
-        const headerLine = lines.shift(); // Assume first line is header and ignore for data processing for now
-        // TODO: Optionally validate headerLine against expected columns: "ID,Activo (0/1),Nombre,Categorías,Precio sin IVA,Precio con IVA,Precio de coste,Marca,Cantidad,Resumen,Descripción"
+        const headerLine = lines.shift(); 
+        const expectedColumns = 11;
 
         const importedProducts: Product[] = lines.map((line, index) => {
-          const parts = line.split(',').map(part => part.trim().replace(/^"(.*)"$/, '$1').replace(/""/g, '"')); // Basic CSV unquoting
+          // Split by semicolon now
+          const parts = line.split(';').map(part => part.trim().replace(/^"(.*)"$/, '$1').replace(/""/g, '"')); 
           
-          if (parts.length < 11) throw new Error(`Line ${index + 1} (after header) has insufficient data. Expected 11 columns. Found ${parts.length}: ${line}`);
+          if (parts.length < expectedColumns) {
+            throw new Error(`Line ${index + 1} (after header) has insufficient data. Expected ${expectedColumns} columns. Found ${parts.length}: ${line.substring(0,100)}...`);
+          }
           
           const code = parts[0];
           const isActiveStr = parts[1];
@@ -107,7 +112,7 @@ const StockManagerClient: React.FC = () => {
         toast({ variant: 'destructive', title: 'Error Importing CSV File', description: errorMessage, duration: 10000 });
       }
     };
-    reader.readAsText(file);
+    reader.readAsText(file, 'UTF-8'); // Specify UTF-8 encoding
     if (event.target) { 
       event.target.value = '';
     }
@@ -118,7 +123,8 @@ const StockManagerClient: React.FC = () => {
       return '';
     }
     const stringField = String(field);
-    if (stringField.includes(',') || stringField.includes('"') || stringField.includes('\n')) {
+    // For semicolon-delimited CSV, we need to quote if it contains semicolon, quote, or newline
+    if (stringField.includes(';') || stringField.includes('"') || stringField.includes('\n')) {
       return `"${stringField.replace(/"/g, '""')}"`;
     }
     return stringField;
@@ -130,7 +136,7 @@ const StockManagerClient: React.FC = () => {
       return;
     }
     
-    const header = "ID,Activo (0/1),Nombre,Categorías,Precio sin IVA,Precio con IVA,Precio de coste,Marca,Cantidad,Resumen,Descripción";
+    const header = "ID;Activo (0/1);Nombre;Categorías;Precio sin IVA;Precio con IVA;Precio de coste;Marca;Cantidad;Resumen;Descripción"; // Use semicolon
     const csvRows = products.map(p => 
       [
         escapeCsvField(p.code),
@@ -144,7 +150,7 @@ const StockManagerClient: React.FC = () => {
         escapeCsvField(p.quantity),
         escapeCsvField(p.summary),
         escapeCsvField(p.description),
-      ].join(',')
+      ].join(';') // Use semicolon
     );
     const content = [header, ...csvRows].join('\n');
     
@@ -172,10 +178,11 @@ const StockManagerClient: React.FC = () => {
   const handleEditFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
     
-    let processedValue: string | number | undefined = value;
+    let processedValue: string | number | boolean | undefined = value;
     if (type === 'number') {
-      processedValue = value === '' ? undefined : parseFloat(value);
-      if (name === 'quantity' && value !== '') processedValue = parseInt(value, 10);
+      const cleanValue = value.replace(',', '.'); // Handle comma as decimal for input
+      processedValue = cleanValue === '' ? undefined : parseFloat(cleanValue);
+      if (name === 'quantity' && cleanValue !== '') processedValue = parseInt(cleanValue, 10);
     }
 
     setEditForm(prev => ({ ...prev, [name]: processedValue }));
@@ -187,7 +194,7 @@ const StockManagerClient: React.FC = () => {
 
 
   const handleUpdateProduct = () => {
-    if (!selectedProduct || !editForm.code) { // Use code as a proxy for id presence from form
+    if (!selectedProduct || !editForm.code) { 
         toast({ variant: 'destructive', title: 'Error', description: 'Product selection or code is missing.' });
         return;
     }
@@ -197,13 +204,13 @@ const StockManagerClient: React.FC = () => {
         toast({ variant: 'destructive', title: 'Error', description: 'Quantity must be a non-negative number.' });
         return;
     }
-    if (!editForm.name) {
+    if (!editForm.name || editForm.name.trim() === '') {
         toast({ variant: 'destructive', title: 'Error', description: 'Name cannot be empty.' });
         return;
     }
 
     const updatedProduct: Product = {
-      id: editForm.code, // Assuming code is the ID
+      id: editForm.code, 
       code: editForm.code,
       name: editForm.name,
       isActive: editForm.isActive ?? selectedProduct.isActive,
@@ -230,13 +237,16 @@ const StockManagerClient: React.FC = () => {
     setProducts(prevProducts => {
       const newProducts = prevProducts.map(p =>
         p.id === productId
-          ? { ...p, quantity: Math.max(0, p.quantity + change), lastUpdated: new Date().toISOString() }
+          ? { ...p, quantity: Math.max(0, (p.quantity || 0) + change), lastUpdated: new Date().toISOString() }
           : p
       );
       
       if (selectedProduct && selectedProduct.id === productId) {
         const updatedSelected = newProducts.find(p => p.id === productId);
-        setSelectedProduct(updatedSelected || null);
+        if (updatedSelected) {
+          setSelectedProduct(updatedSelected);
+          setEditForm(updatedSelected); 
+        }
       }
       return newProducts;
     });
@@ -283,7 +293,7 @@ const StockManagerClient: React.FC = () => {
             <Button onClick={() => fileInputRef.current?.click()} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground shadow-md">
               <Icons.upload className="mr-2 h-5 w-5" /> Import CSV
             </Button>
-            <input type="file" ref={fileInputRef} onChange={handleFileImport} accept=".csv" className="hidden" />
+            <input type="file" ref={fileInputRef} onChange={handleFileImport} accept=".csv,text/csv" className="hidden" />
             <Button onClick={handleExportCSV} className="w-full shadow-md">
               <Icons.download className="mr-2 h-5 w-5" /> Export CSV
             </Button>
@@ -369,7 +379,7 @@ const StockManagerClient: React.FC = () => {
                   </div>
                   <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="name" className="text-right font-medium">Name*</Label>
-                    <Input id="name" name="name" value={editForm.name || ''} onChange={handleEditFormChange} className="col-span-3 text-base" />
+                    <Input id="name" name="name" value={editForm.name || ''} onChange={handleEditFormChange} className="col-span-3 text-base" required />
                   </div>
                    <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="isActive" className="text-right font-medium">Active</Label>
@@ -390,7 +400,7 @@ const StockManagerClient: React.FC = () => {
                   </div>
                   <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="quantity" className="text-right font-medium">Quantity*</Label>
-                    <Input id="quantity" name="quantity" type="number" value={editForm.quantity ?? 0} onChange={handleEditFormChange} className="col-span-3 text-base" min="0"/>
+                    <Input id="quantity" name="quantity" type="number" value={editForm.quantity ?? 0} onChange={handleEditFormChange} className="col-span-3 text-base" min="0" required />
                   </div>
                   <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="priceWithoutVAT" className="text-right font-medium">Price w/o VAT</Label>
@@ -444,15 +454,15 @@ const StockManagerClient: React.FC = () => {
                 <div className="grid grid-cols-3 gap-2 text-sm text-center pt-2 border-t">
                     <div>
                         <p className="font-semibold text-muted-foreground">Price (w/o VAT)</p>
-                        <p>{selectedProduct.priceWithoutVAT?.toFixed(2) ?? 'N/A'}</p>
+                        <p>{selectedProduct.priceWithoutVAT !== undefined ? selectedProduct.priceWithoutVAT.toFixed(2) : 'N/A'}</p>
                     </div>
                     <div>
                         <p className="font-semibold text-muted-foreground">Price (w/ VAT)</p>
-                        <p>{selectedProduct.priceWithVAT?.toFixed(2) ?? 'N/A'}</p>
+                        <p>{selectedProduct.priceWithVAT !== undefined ? selectedProduct.priceWithVAT.toFixed(2) : 'N/A'}</p>
                     </div>
                     <div>
                         <p className="font-semibold text-muted-foreground">Cost Price</p>
-                        <p>{selectedProduct.costPrice?.toFixed(2) ?? 'N/A'}</p>
+                        <p>{selectedProduct.costPrice !== undefined ? selectedProduct.costPrice.toFixed(2) : 'N/A'}</p>
                     </div>
                 </div>
 
@@ -503,3 +513,5 @@ const StockManagerClient: React.FC = () => {
 };
 
 export default StockManagerClient;
+
+    
