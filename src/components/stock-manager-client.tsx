@@ -5,12 +5,14 @@ import type { Product } from '@/types';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
 import { Icons } from '@/components/icons';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, DialogClose } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { format } from 'date-fns';
 
 const StockManagerClient: React.FC = () => {
@@ -23,6 +25,18 @@ const StockManagerClient: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
+  const parseOptionalFloat = (value: string | undefined): number | undefined => {
+    if (value === undefined || value.trim() === '') return undefined;
+    const num = parseFloat(value);
+    return isNaN(num) ? undefined : num;
+  };
+
+  const parseOptionalInt = (value: string | undefined): number | undefined => {
+    if (value === undefined || value.trim() === '') return undefined;
+    const num = parseInt(value, 10);
+    return isNaN(num) ? undefined : num;
+  };
+
   const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -32,42 +46,57 @@ const StockManagerClient: React.FC = () => {
       try {
         const content = e.target?.result as string;
         const lines = content.split('\n').filter(line => line.trim() !== '');
+        
         if (lines.length === 0) {
-          toast({ variant: 'destructive', title: 'Empty File', description: 'The selected CSV file is empty or contains no valid product lines.', duration: 5000 });
+          toast({ variant: 'destructive', title: 'Empty File', description: 'The selected CSV file is empty or contains no product lines.', duration: 5000 });
           return;
         }
-        
+
+        const headerLine = lines.shift(); // Assume first line is header and ignore for data processing for now
+        // TODO: Optionally validate headerLine against expected columns: "ID,Activo (0/1),Nombre,Categorías,Precio sin IVA,Precio con IVA,Precio de coste,Marca,Cantidad,Resumen,Descripción"
+
         const importedProducts: Product[] = lines.map((line, index) => {
-          const parts = line.split(',').map(part => part.trim()); // Use comma as delimiter for CSV
-          if (parts.length < 3) throw new Error(`Line ${index + 1} has insufficient data: ${line}. Expected CSV format: code,name,quantity,[lastUpdated]`);
+          const parts = line.split(',').map(part => part.trim().replace(/^"(.*)"$/, '$1').replace(/""/g, '"')); // Basic CSV unquoting
+          
+          if (parts.length < 11) throw new Error(`Line ${index + 1} (after header) has insufficient data. Expected 11 columns. Found ${parts.length}: ${line}`);
           
           const code = parts[0];
-          const name = parts[1];
-          const quantityStr = parts[2];
-          const lastUpdatedStr = parts.length > 3 ? parts[3] : undefined;
+          const isActiveStr = parts[1];
+          const name = parts[2];
+          const categories = parts[3];
+          const priceWithoutVATStr = parts[4];
+          const priceWithVATStr = parts[5];
+          const costPriceStr = parts[6];
+          const brand = parts[7];
+          const quantityStr = parts[8];
+          const summary = parts[9];
+          const description = parts[10];
 
-          if (!code) throw new Error(`Missing code on line ${index + 1}.`);
-          if (!name) throw new Error(`Missing name on line ${index + 1}.`);
+          if (!code) throw new Error(`Missing ID (code) on line ${index + 1}.`);
+          if (!name) throw new Error(`Missing Nombre (name) on line ${index + 1}.`);
           
           const quantity = parseInt(quantityStr, 10);
-          if (isNaN(quantity)) throw new Error(`Invalid quantity '${quantityStr}' on line ${index + 1}. Must be a number.`);
-          
-          let lastUpdated = new Date().toISOString();
-          if (lastUpdatedStr) {
-            const parsedDate = new Date(lastUpdatedStr);
-            if (!isNaN(parsedDate.getTime())) {
-              lastUpdated = parsedDate.toISOString();
-            } else {
-              console.warn(`Invalid date format '${lastUpdatedStr}' on line ${index + 1}. Using current date.`);
-            }
-          }
+          if (isNaN(quantity)) throw new Error(`Invalid Cantidad (quantity) '${quantityStr}' on line ${index + 1}. Must be a number.`);
+
+          const isActive = isActiveStr === '1';
+          const priceWithoutVAT = parseOptionalFloat(priceWithoutVATStr);
+          const priceWithVAT = parseOptionalFloat(priceWithVATStr);
+          const costPrice = parseOptionalFloat(costPriceStr);
           
           return {
-            id: code || `item-${Date.now()}-${index}`, 
+            id: code, 
             code: code,
+            isActive: isActive,
             name: name,
+            categories: categories || undefined,
+            priceWithoutVAT: priceWithoutVAT,
+            priceWithVAT: priceWithVAT,
+            costPrice: costPrice,
+            brand: brand || undefined,
             quantity: quantity,
-            lastUpdated: lastUpdated,
+            summary: summary || undefined,
+            description: description || undefined,
+            lastUpdated: new Date().toISOString(),
           };
         });
         setProducts(importedProducts);
@@ -83,16 +112,39 @@ const StockManagerClient: React.FC = () => {
       event.target.value = '';
     }
   };
+  
+  const escapeCsvField = (field: string | number | boolean | undefined | null): string => {
+    if (field === undefined || field === null) {
+      return '';
+    }
+    const stringField = String(field);
+    if (stringField.includes(',') || stringField.includes('"') || stringField.includes('\n')) {
+      return `"${stringField.replace(/"/g, '""')}"`;
+    }
+    return stringField;
+  };
 
   const handleExportCSV = () => {
     if (products.length === 0) {
       toast({ variant: 'destructive', title: 'No Data', description: 'There is no stock data to export.' });
       return;
     }
-    // CSV Header
-    const header = "code,name,quantity,lastUpdated";
+    
+    const header = "ID,Activo (0/1),Nombre,Categorías,Precio sin IVA,Precio con IVA,Precio de coste,Marca,Cantidad,Resumen,Descripción";
     const csvRows = products.map(p => 
-      [p.code, `"${p.name.replace(/"/g, '""')}"`, p.quantity, p.lastUpdated].join(',')
+      [
+        escapeCsvField(p.code),
+        escapeCsvField(p.isActive ? '1' : '0'),
+        escapeCsvField(p.name),
+        escapeCsvField(p.categories),
+        escapeCsvField(p.priceWithoutVAT),
+        escapeCsvField(p.priceWithVAT),
+        escapeCsvField(p.costPrice),
+        escapeCsvField(p.brand),
+        escapeCsvField(p.quantity),
+        escapeCsvField(p.summary),
+        escapeCsvField(p.description),
+      ].join(',')
     );
     const content = [header, ...csvRows].join('\n');
     
@@ -117,29 +169,52 @@ const StockManagerClient: React.FC = () => {
     setIsEditing(true);
   };
 
-  const handleEditFormChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setEditForm(prev => ({ ...prev, [name]: name === 'quantity' ? (value === '' ? '' : parseInt(value, 10)) : value }));
+  const handleEditFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value, type } = e.target;
+    
+    let processedValue: string | number | undefined = value;
+    if (type === 'number') {
+      processedValue = value === '' ? undefined : parseFloat(value);
+      if (name === 'quantity' && value !== '') processedValue = parseInt(value, 10);
+    }
+
+    setEditForm(prev => ({ ...prev, [name]: processedValue }));
+  };
+  
+  const handleSwitchChange = (name: keyof Product, checked: boolean) => {
+    setEditForm(prev => ({ ...prev, [name]: checked }));
   };
 
+
   const handleUpdateProduct = () => {
-    if (!selectedProduct || !editForm.id) return;
+    if (!selectedProduct || !editForm.code) { // Use code as a proxy for id presence from form
+        toast({ variant: 'destructive', title: 'Error', description: 'Product selection or code is missing.' });
+        return;
+    }
     
     const quantity = typeof editForm.quantity === 'number' ? editForm.quantity : selectedProduct.quantity;
     if (isNaN(quantity) || quantity < 0) {
         toast({ variant: 'destructive', title: 'Error', description: 'Quantity must be a non-negative number.' });
         return;
     }
-    if (!editForm.code || !editForm.name) {
-        toast({ variant: 'destructive', title: 'Error', description: 'Code and Name cannot be empty.' });
+    if (!editForm.name) {
+        toast({ variant: 'destructive', title: 'Error', description: 'Name cannot be empty.' });
         return;
     }
 
     const updatedProduct: Product = {
-      ...selectedProduct,
-      code: editForm.code || selectedProduct.code,
-      name: editForm.name || selectedProduct.name,
+      id: editForm.code, // Assuming code is the ID
+      code: editForm.code,
+      name: editForm.name,
+      isActive: editForm.isActive ?? selectedProduct.isActive,
+      categories: editForm.categories || undefined,
+      priceWithoutVAT: typeof editForm.priceWithoutVAT === 'number' ? editForm.priceWithoutVAT : undefined,
+      priceWithVAT: typeof editForm.priceWithVAT === 'number' ? editForm.priceWithVAT : undefined,
+      costPrice: typeof editForm.costPrice === 'number' ? editForm.costPrice : undefined,
+      brand: editForm.brand || undefined,
       quantity: quantity,
+      summary: editForm.summary || undefined,
+      description: editForm.description || undefined,
       lastUpdated: new Date().toISOString(),
     };
 
@@ -244,7 +319,7 @@ const StockManagerClient: React.FC = () => {
                         <div className="flex justify-between items-center gap-2">
                           <div className="flex-grow overflow-hidden">
                             <p className="font-semibold text-primary truncate" title={product.name}>{product.name}</p>
-                            <p className="text-sm text-muted-foreground">Code: {product.code}</p>
+                            <p className="text-sm text-muted-foreground">Code: {product.code} {product.isActive ? <span className="text-green-600">(Active)</span> : <span className="text-red-600">(Inactive)</span>}</p>
                           </div>
                            <div className="flex items-center gap-1 flex-shrink-0">
                             <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); updateStockQuantity(product.id, -1); }} aria-label="Decrease stock">
@@ -279,31 +354,70 @@ const StockManagerClient: React.FC = () => {
         <div className="md:col-span-1">
           {isEditing && selectedProduct && (
             <Dialog open={isEditing} onOpenChange={(open) => { if(!open) setIsEditing(false); }}>
-              <DialogContent className="sm:max-w-[480px] rounded-lg shadow-xl">
+              <DialogContent className="sm:max-w-[520px] rounded-lg shadow-xl">
                 <DialogHeader>
                   <DialogTitle className="font-headline text-2xl text-primary">Edit: {selectedProduct.name}</DialogTitle>
                   <DialogDescription>
-                    Modify product details below. Changes are saved locally until you export.
+                    Modify product details. Changes are saved locally.
                   </DialogDescription>
                 </DialogHeader>
-                <div className="grid gap-5 py-4">
+                <ScrollArea className="max-h-[60vh] p-1">
+                <div className="grid gap-5 py-4 pr-4">
                   <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="code" className="text-right font-medium">Code</Label>
-                    <Input id="code" name="code" value={editForm.code || ''} onChange={handleEditFormChange} className="col-span-3 text-base rounded-md shadow-sm" />
+                    <Label htmlFor="code" className="text-right font-medium">ID (Code)</Label>
+                    <Input id="code" name="code" value={editForm.code || ''} onChange={handleEditFormChange} className="col-span-3 text-base" />
                   </div>
                   <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="name" className="text-right font-medium">Name</Label>
-                    <Input id="name" name="name" value={editForm.name || ''} onChange={handleEditFormChange} className="col-span-3 text-base rounded-md shadow-sm" />
+                    <Label htmlFor="name" className="text-right font-medium">Name*</Label>
+                    <Input id="name" name="name" value={editForm.name || ''} onChange={handleEditFormChange} className="col-span-3 text-base" />
+                  </div>
+                   <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="isActive" className="text-right font-medium">Active</Label>
+                    <Switch
+                        id="isActive"
+                        checked={editForm.isActive ?? false}
+                        onCheckedChange={(checked) => handleSwitchChange('isActive', checked)}
+                        className="col-span-3"
+                    />
                   </div>
                   <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="quantity" className="text-right font-medium">Quantity</Label>
-                    <Input id="quantity" name="quantity" type="number" value={editForm.quantity === '' ? '' : (editForm.quantity || 0)} onChange={handleEditFormChange} className="col-span-3 text-base rounded-md shadow-sm" min="0"/>
+                    <Label htmlFor="categories" className="text-right font-medium">Categories</Label>
+                    <Input id="categories" name="categories" value={editForm.categories || ''} onChange={handleEditFormChange} className="col-span-3 text-base" />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="brand" className="text-right font-medium">Brand</Label>
+                    <Input id="brand" name="brand" value={editForm.brand || ''} onChange={handleEditFormChange} className="col-span-3 text-base" />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="quantity" className="text-right font-medium">Quantity*</Label>
+                    <Input id="quantity" name="quantity" type="number" value={editForm.quantity ?? 0} onChange={handleEditFormChange} className="col-span-3 text-base" min="0"/>
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="priceWithoutVAT" className="text-right font-medium">Price w/o VAT</Label>
+                    <Input id="priceWithoutVAT" name="priceWithoutVAT" type="number" step="0.01" value={editForm.priceWithoutVAT ?? ''} onChange={handleEditFormChange} className="col-span-3 text-base" />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="priceWithVAT" className="text-right font-medium">Price w/ VAT</Label>
+                    <Input id="priceWithVAT" name="priceWithVAT" type="number" step="0.01" value={editForm.priceWithVAT ?? ''} onChange={handleEditFormChange} className="col-span-3 text-base" />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="costPrice" className="text-right font-medium">Cost Price</Label>
+                    <Input id="costPrice" name="costPrice" type="number" step="0.01" value={editForm.costPrice ?? ''} onChange={handleEditFormChange} className="col-span-3 text-base" />
+                  </div>
+                  <div className="grid grid-cols-4 items-start gap-4">
+                    <Label htmlFor="summary" className="text-right font-medium pt-2">Summary</Label>
+                    <Textarea id="summary" name="summary" value={editForm.summary || ''} onChange={handleEditFormChange} className="col-span-3 text-base" rows={3}/>
+                  </div>
+                  <div className="grid grid-cols-4 items-start gap-4">
+                    <Label htmlFor="description" className="text-right font-medium pt-2">Description</Label>
+                    <Textarea id="description" name="description" value={editForm.description || ''} onChange={handleEditFormChange} className="col-span-3 text-base" rows={5}/>
                   </div>
                   <p className="text-sm text-muted-foreground text-center col-span-4 pt-2 border-t">
                     Last Updated: {format(new Date(selectedProduct.lastUpdated), "MMM d, yyyy 'at' h:mm a")}
                   </p>
                 </div>
-                <DialogFooter className="gap-2 sm:gap-0">
+                </ScrollArea>
+                <DialogFooter className="gap-2 sm:gap-0 pt-4">
                   <Button variant="outline" onClick={() => setIsEditing(false)} className="shadow-sm">Cancel</Button>
                   <Button onClick={handleUpdateProduct} className="bg-accent hover:bg-accent/90 text-accent-foreground shadow-md"><Icons.save className="mr-2 h-4 w-4" /> Save Changes</Button>
                 </DialogFooter>
@@ -317,11 +431,47 @@ const StockManagerClient: React.FC = () => {
                   <Icons.package className="h-7 w-7" /> 
                   <span className="truncate" title={selectedProduct.name}>{selectedProduct.name}</span>
                 </CardTitle>
-                <CardDescription>Code: {selectedProduct.code}</CardDescription>
+                <CardDescription>
+                  Code: {selectedProduct.code} | Status: <span className={selectedProduct.isActive ? "text-green-600 font-semibold" : "text-red-600 font-semibold"}>{selectedProduct.isActive ? "Active" : "Inactive"}</span>
+                </CardDescription>
               </CardHeader>
-              <CardContent className="pt-6">
+              <CardContent className="pt-6 space-y-3">
                 <p className="text-4xl font-bold text-center">{selectedProduct.quantity} <span className="text-2xl font-normal text-muted-foreground">in stock</span></p>
-                <p className="text-sm text-muted-foreground mt-4 text-center">
+                
+                {selectedProduct.brand && <p className="text-sm"><span className="font-semibold text-muted-foreground">Brand:</span> {selectedProduct.brand}</p>}
+                {selectedProduct.categories && <p className="text-sm"><span className="font-semibold text-muted-foreground">Categories:</span> {selectedProduct.categories}</p>}
+                
+                <div className="grid grid-cols-3 gap-2 text-sm text-center pt-2 border-t">
+                    <div>
+                        <p className="font-semibold text-muted-foreground">Price (w/o VAT)</p>
+                        <p>{selectedProduct.priceWithoutVAT?.toFixed(2) ?? 'N/A'}</p>
+                    </div>
+                    <div>
+                        <p className="font-semibold text-muted-foreground">Price (w/ VAT)</p>
+                        <p>{selectedProduct.priceWithVAT?.toFixed(2) ?? 'N/A'}</p>
+                    </div>
+                    <div>
+                        <p className="font-semibold text-muted-foreground">Cost Price</p>
+                        <p>{selectedProduct.costPrice?.toFixed(2) ?? 'N/A'}</p>
+                    </div>
+                </div>
+
+                {selectedProduct.summary && (
+                    <div className="pt-2 border-t">
+                        <h4 className="font-semibold text-muted-foreground">Summary:</h4>
+                        <p className="text-sm whitespace-pre-wrap">{selectedProduct.summary}</p>
+                    </div>
+                )}
+                {selectedProduct.description && (
+                    <div className="pt-2 border-t">
+                        <h4 className="font-semibold text-muted-foreground">Description:</h4>
+                        <ScrollArea className="h-24">
+                           <p className="text-sm whitespace-pre-wrap pr-2">{selectedProduct.description}</p>
+                        </ScrollArea>
+                    </div>
+                )}
+
+                <p className="text-xs text-muted-foreground mt-4 text-center border-t pt-3">
                   Last Updated: {format(new Date(selectedProduct.lastUpdated), "MMM d, yyyy 'at' h:mm a")}
                 </p>
               </CardContent>
@@ -353,5 +503,3 @@ const StockManagerClient: React.FC = () => {
 };
 
 export default StockManagerClient;
-
-    
