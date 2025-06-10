@@ -168,7 +168,7 @@ const StockManagerClient: React.FC = () => {
             </CardTitle>
             <Dialog>
               <DialogTrigger asChild>
-                <Button variant="outline" size="sm" className="border-accent text-accent hover:bg-accent hover:text-accent-foreground">
+                <Button variant="ghost" size="sm">
                   <Icons.apk className="mr-2 h-4 w-4" /> Get APK Info
                 </Button>
               </DialogTrigger>
@@ -194,12 +194,12 @@ const StockManagerClient: React.FC = () => {
               </DialogContent>
             </Dialog>
           </CardHeader>
-          <CardContent className="p-4 flex flex-col sm:flex-row gap-3 sm:gap-4 items-center">
-            <Button onClick={() => fileInputRef.current?.click()} className="w-full sm:w-auto bg-accent hover:bg-accent/90 text-accent-foreground shadow-md">
+          <CardContent className="p-4 flex flex-col gap-3 items-stretch">
+            <Button onClick={() => fileInputRef.current?.click()} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground shadow-md">
               <Icons.upload className="mr-2 h-5 w-5" /> Import TXT
             </Button>
             <input type="file" ref={fileInputRef} onChange={handleFileImport} accept=".txt" className="hidden" />
-            <Button onClick={handleExportTXT} className="w-full sm:w-auto shadow-md">
+            <Button onClick={handleExportTXT} className="w-full shadow-md">
               <Icons.download className="mr-2 h-5 w-5" /> Export TXT
             </Button>
           </CardContent>
